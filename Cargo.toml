@@ -19,6 +19,7 @@ packed_struct = "0.10.1"
 serde = { version = "1.0", features = ["derive"] }
 serde-wasm-bindgen = "0.4.5"
 wasm-bindgen = "0.2"
+xword-puz = { git = "https://github.com/orez-/xword-puz.git" }
 
 [dependencies.web-sys]
 version = "0.3"

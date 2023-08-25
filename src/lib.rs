@@ -1,121 +1,11 @@
-mod generate_puz;
+mod multi_error;
 mod parse_grid;
 
-use std::collections::HashMap;
-use std::fmt;
-use std::iter::zip;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
+use xword_puz::{Crossword, CrosswordArgs};
+use crate::multi_error::MultiError;
 use crate::parse_grid::CrosswordGrid;
-
-#[derive(Debug)]
-pub enum CrosswordCell {
-    Char(char),
-    Rebus(String),
-    Wall,
-}
-
-impl CrosswordCell {
-    pub fn empty() -> Self {
-        Self::Char('A')
-    }
-
-    pub fn is_wall(&self) -> bool {
-        matches!(self, CrosswordCell::Wall)
-    }
-}
-
-pub struct Crossword {
-    width: u8,
-    height: u8,
-    cells: Vec<CrosswordCell>,
-    across_clues: Vec<(u16, String)>,
-    down_clues: Vec<(u16, String)>,
-    title: String,
-    author: String,
-    copyright: String,
-    notes: String,
-}
-
-impl fmt::Debug for Crossword {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "    title: {}", self.title)?;
-        writeln!(f, "   author: {}", self.author)?;
-        writeln!(f, "copyright: {}", self.copyright)?;
-        writeln!(f, "    notes: {}", self.notes)?;
-        let mut it = self.cells.iter();
-        for _ in 0..self.height {
-            for _ in 0..self.width {
-                match it.next().unwrap() {
-                    CrosswordCell::Char(c) => write!(f, "{}", c)?,
-                    CrosswordCell::Rebus(_) => todo!(),
-                    CrosswordCell::Wall => write!(f, "░")?,
-                }
-            }
-            write!(f, "\n")?;
-        }
-        Ok(())
-    }
-}
-
-impl Crossword {
-    fn validate(&self) -> Result<(), JsErrors> {
-        let mut issues = JsErrors::new();
-        let (across, down) = self.expected_grid_nums();
-        if let Err(err) = Self::validate_clues(&across, &self.across_clues) {
-            issues.push("across_clues", err);
-        }
-        if let Err(err) = Self::validate_clues(&down, &self.down_clues) {
-            issues.push("down_clues", err);
-        }
-
-        if issues.is_empty() { Ok(()) }
-        else { Err(issues) }
-    }
-
-    fn validate_clues(expected: &[u16], actual: &[(u16, String)]) -> Result<(), String> {
-        if actual.windows(2).any(|w| w[0] >= w[1]) {
-            return Err("found misordered clues. Clue numbers must be strictly increasing".into());
-        }
-        if expected.len() != actual.len() {
-            return Err(format!("expected {} clues, found {}", expected.len(), actual.len()));
-        }
-        let mismatch =
-            zip(expected, actual)
-            .map(|(a, (b, _))| (a, b))
-            .filter(|(a, b)| a != b)
-            .next();
-        if let Some((exp, act)) = mismatch {
-            return if exp < act { Err(format!("missing clue {exp}")) }
-            else { Err(format!("found extraneous clue {act}")) };
-        }
-        Ok(())
-    }
-
-    fn expected_grid_nums(&self) -> (Vec<u16>, Vec<u16>) {
-        let width = self.width as usize;
-        let mut across = Vec::new();
-        let mut down = Vec::new();
-        let mut num = 1;
-        for (idx, cell) in self.cells.iter().enumerate() {
-            if cell.is_wall() { continue; }
-            let x = idx % width;
-            let y = idx / width;
-            let is_across = x == 0 || self.cells[idx - 1].is_wall();
-            let is_down = y == 0 || self.cells[idx - width].is_wall();
-            if is_across {
-                across.push(num);
-            }
-            if is_down {
-                down.push(num);
-            }
-            if is_across || is_down {
-                num += 1;
-            }
-        }
-        (across, down)
-    }
-}
 
 fn parse_clue_prefix(line: &str) -> Option<(u16, String)> {
     if let Some((num, clue)) = line.trim_start().split_once('.') {
@@ -168,37 +58,11 @@ impl CrosswordInput {
     }
 }
 
-#[derive(Default)]
-pub struct JsErrors {
-    errors: HashMap<String, String>,
-}
-
-impl JsErrors {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    fn push(&mut self, section: &str, msg: String) {
-        self.errors.insert(section.into(), msg);
-    }
-}
-
-impl Into<JsValue> for JsErrors {
-    fn into(self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.errors)
-            .expect("map of strings to strings should be serializable")
-    }
-}
-
 #[wasm_bindgen]
-pub fn generate_puz_file(input: CrosswordInput) -> Result<Vec<u8>, JsErrors> {
+pub fn generate_puz_file(input: CrosswordInput) -> Result<Vec<u8>, MultiError> {
     set_panic_hook();
 
-    let mut errors = JsErrors::new();
+    let mut errors = MultiError::new();
     let CrosswordInput { image, across_clues, down_clues, title, author, copyright, notes } = input;
     let across_clues = parse_clue_block(&across_clues);
     if let Err(msg) = across_clues {
@@ -215,11 +79,11 @@ pub fn generate_puz_file(input: CrosswordInput) -> Result<Vec<u8>, JsErrors> {
     let (Ok(across_clues), Ok(down_clues), Ok(img)) = (across_clues, down_clues, img)
         else { return Err(errors) };
     let CrosswordGrid { width, height, cells } = parse_grid::parse_crossword(img);
-    let xword = Crossword {
-        width, height, cells,
+    let xword: Crossword = CrosswordArgs {
+        width, height, grid: cells,
         title, author, copyright, notes,
         across_clues, down_clues,
-    };
+    }.into();
     xword.validate()?;
     Ok(xword.as_puz())
 }

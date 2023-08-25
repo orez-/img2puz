@@ -1,5 +1,5 @@
 use image::{DynamicImage, GenericImageView};
-use crate::CrosswordCell;
+use xword_puz::CrosswordCell;
 
 const DARK_THRESHOLD: u8 = 0x80;
 const CLOSE_THRESHOLD: usize = 3;
@@ -33,7 +33,7 @@ pub fn parse_crossword(img: DynamicImage) -> CrosswordGrid {
             let is_wall = set >= sq / 2;
             cells.push(
                 if is_wall { CrosswordCell::Wall }
-                else { CrosswordCell::empty() }
+                else { CrosswordCell::Empty }
             );
         }
     }
